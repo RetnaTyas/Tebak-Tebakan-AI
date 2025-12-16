@@ -6,7 +6,8 @@ if (!apiKey) {
   console.error("API_KEY is missing from environment variables.");
 }
 
-const ai = new GoogleGenAI({ apiKey: apiKey || 'dummy-key' });
+// Strictly use process.env.API_KEY without dummy fallback
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 Kamu adalah Game Master yang seru, lucu, dan pintar untuk permainan tebak-tebakan (riddles) dalam Bahasa Indonesia.
