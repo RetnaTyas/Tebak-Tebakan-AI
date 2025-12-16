@@ -6,7 +6,8 @@ if (!apiKey) {
   console.error("API_KEY is missing from environment variables.");
 }
 
-const ai = new GoogleGenAI({ apiKey: apiKey || 'dummy-key' });
+// Strictly use process.env.API_KEY without dummy fallback
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 const SYSTEM_INSTRUCTION = `
 Kamu adalah Game Master yang seru, lucu, dan pintar untuk permainan tebak-tebakan (riddles) dalam Bahasa Indonesia.
@@ -14,30 +15,35 @@ Tugasmu adalah membuat tebak-tebakan yang menarik dan kreatif, serta menilai jaw
 Gunakan bahasa Indonesia yang gaul, seru, namun tetap sopan.
 `;
 
-export const generateRiddle = async (category: Category, avoidList: string[] = []): Promise<Riddle> => {
-  const model = "gemini-2.5-flash";
+export const generateRiddle = async (category: Category, avoidList: string[] = [], isHardMode: boolean = false): Promise<Riddle> => {
+  const model = "gemini-2.5-flash-lite-preview-02-05";
   
   let promptCategory = category === 'Acak' ? 'apa saja (campuran)' : category;
   
-  // Ambil maksimal 15 item terakhir untuk menghemat token konteks, tapi cukup untuk menghindari pengulangan sesi ini
+  // Ambil maksimal 15 item terakhir untuk menghemat token konteks
   const avoidContext = avoidList.length > 0 
     ? `DAFTAR TERLARANG (Jangan buat yang mirip ini): ${avoidList.slice(-15).join("; ")}.` 
     : "";
 
+  const difficultyInstruction = isHardMode
+    ? "LEVEL: HARD MODE. Buat tebak-tebakan yang SANGAT SULIT, MENJEBAK, membutuhkan LOGIKA LATERAL atau PEMIKIRAN KRITIS TINGGI. Jangan berikan tebakan anak-anak yang mudah. Jawaban harus tetap masuk akal tapi tidak terpikirkan secara langsung."
+    : "LEVEL: NORMAL. Buat tebak-tebakan yang UNIK, KREATIF, dan JARANG ORANG TAHU, tapi masih bisa ditebak dengan logika umum.";
+
   const prompt = `
-    Tugas: Buatkan 1 (satu) tebak-tebakan kategori "${promptCategory}" yang UNIK, KREATIF, dan JARANG ORANG TAHU.
+    Tugas: Buatkan 1 (satu) tebak-tebakan kategori "${promptCategory}".
+    ${difficultyInstruction}
     
     ${avoidContext}
 
     Instruksi Khusus:
     1. Pastikan jawabannya spesifik (1-3 kata).
-    2. Hindari tebakan "bapak-bapak" yang terlalu klise atau garing, cari yang cerdas atau lucu banget.
+    2. Hindari tebakan "bapak-bapak" yang garing kecuali kategori Lucu.
     3. Output harus format JSON valid.
     
     Sertakan:
     - question: Pertanyaannya.
     - answer: Jawaban (1-3 kata).
-    - hint: Petunjuk yang membantu tapi tidak langsung membocorkan.
+    - hint: Petunjuk yang membantu (jika Normal) atau Petunjuk yang sangat samar/kriptik (jika Hard Mode).
     - funFact: Fakta unik/ilmiah/sejarah singkat terkait jawaban tersebut.
   `;
 
@@ -53,7 +59,7 @@ export const generateRiddle = async (category: Category, avoidList: string[] = [
           properties: {
             question: { type: Type.STRING, description: "Pertanyaan tebak-tebakan" },
             answer: { type: Type.STRING, description: "Jawaban yang benar" },
-            hint: { type: Type.STRING, description: "Petunjuk untuk membantu pemain" },
+            hint: { type: Type.STRING, description: "Petunjuk" },
             funFact: { type: Type.STRING, description: "Fakta unik terkait jawaban" }
           },
           required: ["question", "answer", "hint", "funFact"]
@@ -67,7 +73,6 @@ export const generateRiddle = async (category: Category, avoidList: string[] = [
     return JSON.parse(jsonText) as Riddle;
   } catch (error) {
     console.error("Error generating riddle:", error);
-    // Fallback riddle in case of error
     return {
       question: "Apa yang makin diisi makin ringan?",
       answer: "Balon",
@@ -81,7 +86,7 @@ export const checkAnswer = async (
   riddle: Riddle, 
   userAnswer: string
 ): Promise<AnswerValidation> => {
-  const model = "gemini-2.5-flash";
+  const model = "gemini-2.5-flash-lite-preview-02-05";
 
   const prompt = `
     Pertanyaan: "${riddle.question}"
@@ -121,7 +126,6 @@ export const checkAnswer = async (
     return JSON.parse(jsonText) as AnswerValidation;
   } catch (error) {
     console.error("Error checking answer:", error);
-    // Fallback logic check (simple string match)
     const normalizedUser = userAnswer.toLowerCase().trim();
     const normalizedKey = riddle.answer.toLowerCase().trim();
     const isCorrect = normalizedUser === normalizedKey || normalizedUser.includes(normalizedKey);
