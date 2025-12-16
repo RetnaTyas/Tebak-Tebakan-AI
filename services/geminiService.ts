@@ -16,7 +16,7 @@ Gunakan bahasa Indonesia yang gaul, seru, namun tetap sopan.
 `;
 
 export const generateRiddle = async (category: Category, avoidList: string[] = [], isHardMode: boolean = false): Promise<Riddle> => {
-  const model = "gemini-2.5-flash";
+  const model = "gemini-2.5-flash-lite-preview-02-05";
   
   let promptCategory = category === 'Acak' ? 'apa saja (campuran)' : category;
   
@@ -86,7 +86,7 @@ export const checkAnswer = async (
   riddle: Riddle, 
   userAnswer: string
 ): Promise<AnswerValidation> => {
-  const model = "gemini-2.5-flash";
+  const model = "gemini-2.5-flash-lite-preview-02-05";
 
   const prompt = `
     Pertanyaan: "${riddle.question}"
