@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Image as ImageIcon, Sparkles } from 'lucide-react';
+import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Image as ImageIcon, Sparkles, Zap, Skull } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 import Layout from './components/Layout';
@@ -35,6 +35,7 @@ export default function App() {
   const [history, setHistory] = useState<string[]>([]);
   const [appLogo, setAppLogo] = useState<string | null>(null);
   const [isGeneratingLogo, setIsGeneratingLogo] = useState(false);
+  const [isHardMode, setIsHardMode] = useState(false);
   
   // Load high score and history from local storage
   useEffect(() => {
@@ -99,8 +100,8 @@ export default function App() {
       setUserAnswer('');
       setFeedback('');
       
-      // Pass history to avoid duplicates
-      const riddle = await generateRiddle(cat, history);
+      // Pass history and hardMode flag
+      const riddle = await generateRiddle(cat, history, isHardMode);
       
       setCurrentRiddle(riddle);
       
@@ -145,9 +146,13 @@ export default function App() {
       colors: ['#8b5cf6', '#ec4899', '#3b82f6']
     });
     
+    // Higher score for hard mode
+    const basePoints = isHardMode ? 20 : 10;
+    const streakBonus = stats.streak * (isHardMode ? 3 : 2);
+
     setStats(prev => ({
       ...prev,
-      score: prev.score + 10 + (prev.streak * 2),
+      score: prev.score + basePoints + streakBonus,
       streak: prev.streak + 1
     }));
     setGameState(GameState.RESULT);
@@ -156,11 +161,9 @@ export default function App() {
   const handleFailure = () => {
     setStats(prev => ({
       ...prev,
-      // Lives are unlimited, so we don't decrement them
       streak: 0
     }));
     
-    // Game never ends due to failure
     setGameState(GameState.RESULT);
   };
 
@@ -210,8 +213,24 @@ export default function App() {
           Tebak AI
         </h1>
         <p className="text-lg text-slate-300 max-w-md mx-auto">
-          Mode Tanpa Batas! Pilih kategori dan main sepuasnya tanpa takut Game Over.
+          Mode Tanpa Batas! Pilih kategori dan main sepuasnya.
         </p>
+
+        {/* Hard Mode Toggle */}
+        <button 
+          onClick={() => setIsHardMode(!isHardMode)}
+          className={`
+            flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300
+            ${isHardMode 
+              ? 'bg-red-500/20 border-red-500 text-red-200 hover:bg-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
+              : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
+          `}
+        >
+          {isHardMode ? <Skull size={18} /> : <Zap size={18} />}
+          <span className="font-bold text-sm uppercase tracking-wider">
+            Mode Sulit: {isHardMode ? 'ON' : 'OFF'}
+          </span>
+        </button>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
@@ -261,6 +280,11 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-3">
+          {isHardMode && (
+             <div className="text-red-400 text-xs font-black uppercase tracking-widest border border-red-500/30 px-2 py-1 rounded bg-red-900/20 animate-pulse">
+               Hard Mode
+             </div>
+          )}
           <div className="text-slate-400 text-sm font-semibold tracking-wider uppercase hidden md:block">
             {category}
           </div>
@@ -275,15 +299,20 @@ export default function App() {
       </div>
 
       {/* Riddle Card */}
-      <div className="bg-white/5 border border-white/10 rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden backdrop-blur-md">
+      <div className={`
+          bg-white/5 border rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden backdrop-blur-md
+          ${isHardMode ? 'border-red-500/20 shadow-red-900/20' : 'border-white/10'}
+        `}>
          {/* Decorative quotes */}
          <div className="absolute top-4 left-6 text-6xl text-white/5 font-serif select-none">“</div>
          <div className="absolute bottom-4 right-6 text-6xl text-white/5 font-serif select-none transform rotate-180">“</div>
 
         <div className="relative z-10 flex flex-col gap-6 items-center text-center">
           <div className="flex items-center gap-3">
-             <Brain size={32} className="text-violet-400" />
-             <h3 className="text-xl font-bold text-violet-200">Pertanyaan</h3>
+             {isHardMode ? <Skull size={32} className="text-red-400" /> : <Brain size={32} className="text-violet-400" />}
+             <h3 className={`text-xl font-bold ${isHardMode ? 'text-red-200' : 'text-violet-200'}`}>
+               {isHardMode ? 'Pertanyaan Sulit' : 'Pertanyaan'}
+             </h3>
              <button onClick={() => currentRiddle && speak(currentRiddle.question)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400">
                 <Volume2 size={20} />
              </button>
@@ -293,7 +322,7 @@ export default function App() {
             {currentRiddle?.question}
           </p>
 
-          {showHint && (
+          {showHint && !isHardMode && (
             <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 px-4 py-3 rounded-xl text-sm animate-fade-in flex items-center gap-2">
               <Lightbulb size={16} className="text-yellow-400 shrink-0" />
               {currentRiddle?.hint}
@@ -318,12 +347,12 @@ export default function App() {
             <Button
                 type="button"
                 variant="secondary"
-                className="col-span-1"
-                onClick={() => setShowHint(true)}
-                disabled={showHint || gameState === GameState.CHECKING}
-                title="Lihat Petunjuk"
+                className={`col-span-1 ${isHardMode ? 'opacity-50 grayscale' : ''}`}
+                onClick={() => !isHardMode && setShowHint(true)}
+                disabled={showHint || gameState === GameState.CHECKING || isHardMode}
+                title={isHardMode ? "Petunjuk tidak tersedia di Mode Sulit" : "Lihat Petunjuk"}
             >
-                <HelpCircle size={24} />
+                {isHardMode ? <Skull size={24} /> : <HelpCircle size={24} />}
             </Button>
             <Button 
                 type="submit" 
