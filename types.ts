@@ -10,6 +10,7 @@ export interface Riddle {
 
 export interface AnswerValidation {
   isCorrect: boolean;
+  isClose: boolean;
   feedback: string;
   similarityScore?: number;
 }

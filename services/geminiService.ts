@@ -159,14 +159,18 @@ export const checkAnswer = async (
     
     Jawaban User: "${userAnswer}"
 
-    Tugas: Validasi jawaban user.
-    - Toleransi typo kecil atau sinonim dekat diperbolehkan.
-    - Jika jawaban user "mirip tapi salah" (misal: hampir benar tapi kurang tepat), anggap salah tapi beri semangat.
+    Tugas: Validasi jawaban user dengan output JSON.
+    
+    Logika Penilaian:
+    1. isCorrect: TRUE jika jawaban sama persis, sinonim, atau typo kecil.
+    2. isCorrect: FALSE & isClose: TRUE jika jawaban konsepnya benar tapi kata salah, kurang spesifik (misal: "mobil" vs "kendaraan"), atau mirip.
+    3. isCorrect: FALSE & isClose: FALSE jika jawaban salah total.
     
     Output JSON:
     {
       "isCorrect": boolean,
-      "feedback": "komentar singkat seru/lucu"
+      "isClose": boolean,
+      "feedback": "komentar singkat seru/lucu/menyemangati"
     }
   `;
 
@@ -176,16 +180,17 @@ export const checkAnswer = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.7,
+        temperature: 0.5, // Lower temperature for stricter logic
         maxOutputTokens: 500,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
             isCorrect: { type: Type.BOOLEAN },
+            isClose: { type: Type.BOOLEAN, description: "True if answer is almost correct but not exact" },
             feedback: { type: Type.STRING, description: "Komentar singkat tentang jawaban user" }
           },
-          required: ["isCorrect", "feedback"]
+          required: ["isCorrect", "isClose", "feedback"]
         }
       }
     });

@@ -15,12 +15,15 @@ const INITIAL_STATS: PlayerStats = {
   highScore: 0
 };
 
+type ResultStatus = 'CORRECT' | 'CLOSE' | 'WRONG';
+
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
   const [stats, setStats] = useState<PlayerStats>(INITIAL_STATS);
   const [currentRiddle, setCurrentRiddle] = useState<Riddle | null>(null);
   const [userAnswer, setUserAnswer] = useState('');
   const [feedback, setFeedback] = useState<string>('');
+  const [resultStatus, setResultStatus] = useState<ResultStatus>('WRONG');
   const [showHint, setShowHint] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
   const [enableAnimation, setEnableAnimation] = useState(true);
@@ -114,6 +117,7 @@ export default function App() {
       setShowHint(false);
       setUserAnswer('');
       setFeedback('');
+      setResultStatus('WRONG');
       setErrorMsg(null);
       
       let riddle: Riddle;
@@ -158,8 +162,13 @@ export default function App() {
         setFeedback(result.feedback);
 
         if (result.isCorrect) {
+          setResultStatus('CORRECT');
           handleSuccess();
+        } else if (result.isClose) {
+          setResultStatus('CLOSE');
+          handleFailure(); // Streak resets, but different UI shown
         } else {
+          setResultStatus('WRONG');
           handleFailure();
         }
     } catch (e: any) {
@@ -296,7 +305,7 @@ export default function App() {
 
       <div className="text-center space-y-4 w-full flex flex-col items-center pt-8">
         <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-fuchsia-400 to-orange-400 drop-shadow-sm tracking-tight py-2">
-          Tebak AI
+          Tebak-Tebakan Seru
         </h1>
         <p className="text-lg text-slate-300 max-w-md mx-auto">
           Tantangan Tebak-tebakan Seru Tanpa Batas!
@@ -469,25 +478,40 @@ export default function App() {
   );
 
   const renderResult = () => {
-    const isCorrect = feedback.toLowerCase().includes("benar") || feedback.toLowerCase().includes("hebat") || feedback.toLowerCase().includes("tepat") || feedback.toLowerCase().includes("mantap");
+    let headerText = "Yah, Kurang Tepat!";
+    let bgClass = "bg-gradient-to-br from-rose-500/20 to-red-600/20 border-rose-500/30";
+    let icon = "😓";
+    let iconClass = "bg-rose-500 text-white";
+
+    if (resultStatus === 'CORRECT') {
+      headerText = "Mantap Betul!";
+      bgClass = "bg-gradient-to-br from-emerald-500/20 to-green-600/20 border-emerald-500/30";
+      icon = "🎉";
+      iconClass = "bg-emerald-500 text-white";
+    } else if (resultStatus === 'CLOSE') {
+      headerText = "Dikit Lagi!";
+      bgClass = "bg-gradient-to-br from-amber-500/20 to-orange-600/20 border-amber-500/30";
+      icon = "😬";
+      iconClass = "bg-amber-500 text-white";
+    }
     
     return (
       <div className="w-full max-w-lg flex flex-col gap-6 animate-scale-in">
         <div className={`
           relative rounded-3xl p-8 md:p-10 shadow-2xl text-center overflow-hidden
-          ${isCorrect ? 'bg-gradient-to-br from-emerald-500/20 to-green-600/20 border-emerald-500/30' : 'bg-gradient-to-br from-rose-500/20 to-red-600/20 border-rose-500/30'}
+          ${bgClass}
           border backdrop-blur-md
         `}>
           <div className="relative z-10 flex flex-col items-center gap-4">
             <div className={`
               w-20 h-20 rounded-full flex items-center justify-center text-4xl shadow-lg mb-2
-              ${isCorrect ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}
+              ${iconClass}
             `}>
-              {isCorrect ? '🎉' : '😓'}
+              {icon}
             </div>
 
             <h2 className="text-3xl font-black text-white">
-              {isCorrect ? 'Mantap Betul!' : 'Yah, Kurang Tepat!'}
+              {headerText}
             </h2>
             
             <p className="text-slate-200 text-lg leading-relaxed">
