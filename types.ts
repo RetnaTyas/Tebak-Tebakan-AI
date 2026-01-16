@@ -2,10 +2,27 @@
 export type Category = 'Acak';
 
 export interface Riddle {
+  id: string; // Unique ID for DB
   question: string;
   answer: string;
+  acceptedAnswers: string[]; // List variasi jawaban untuk validasi instan
   hint: string;
   funFact: string;
+  createdAt?: number;
+}
+
+export interface Attempt {
+  id?: number;
+  riddleId: string;
+  userAnswer: string;
+  isCorrect: boolean;
+  feedback: string;
+  timestamp: number;
+}
+
+export interface UserProfile {
+  persona: string; // Description of user style (e.g. "Suka singkatan", "Logis")
+  lastUpdated: number;
 }
 
 export interface AnswerValidation {

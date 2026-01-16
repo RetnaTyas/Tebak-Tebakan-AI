@@ -1,102 +1,163 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { Riddle, AnswerValidation } from "../types";
+import { Riddle, AnswerValidation, Attempt } from "../types";
 
 const SYSTEM_INSTRUCTION = `
-Berperanlah sebagai REST API Server yang hanya merespon dengan raw JSON.
-Tugas: Generate konten tebak-tebakan dalam Bahasa Indonesia.
-Rules:
-1. Output HANYA satu JSON object valid.
-2. JANGAN ada teks pengantar, penutup, atau Markdown code blocks (seperti \`\`\`json).
-3. Pastikan sintaks JSON valid (kutip ganda untuk key/value, escape characters jika perlu).
+Berperanlah sebagai REST API Server game tebak-tebakan.
+Output HANYA satu JSON object valid.
+Dilarang ada markdown block (no \`\`\`).
 `;
 
-// Helper to parse and throw readable errors
 const handleError = (error: any): never => {
   console.error("Gemini API Error:", error);
   let message = "Terjadi kesalahan tidak terduga pada AI.";
-
   const errString = error.toString();
   
   if (errString.includes("404") || (error.status === 404)) {
-    message = "Model AI tidak ditemukan (404). Mohon tunggu update developer.";
-  } else if (errString.includes("401") || errString.includes("API key") || (error.status === 401)) {
-    message = "API Key tidak valid. Cek kembali di Pengaturan.";
-  } else if (errString.includes("429") || (error.status === 429)) {
-    message = "Kuota API Key habis (Rate Limit). Tunggu sebentar atau ganti Key.";
-  } else if (errString.includes("fetch failed") || errString.includes("NetworkError")) {
-    message = "Gagal terhubung ke internet. Periksa koneksi Anda.";
-  } else if (errString.includes("JSON") || errString.includes("SyntaxError")) {
-    message = "Format data dari AI rusak. Coba lagi.";
-  } else if (error.message) {
-    message = `Gagal: ${error.message}`;
+    message = "Model AI tidak ditemukan.";
+  } else if (errString.includes("401")) {
+    message = "API Key tidak valid.";
+  } else if (errString.includes("429")) {
+    message = "Kuota API Key habis.";
   }
-
   throw new Error(message);
 };
 
-// Helper to clean potential markdown or conversational prefixes
 const cleanJSON = (text: string): string => {
   if (!text) return "";
-  
-  // 1. Remove Markdown Code Blocks patterns specifically
   let cleaned = text.replace(/```json/gi, "").replace(/```/g, "");
-
-  // 2. Find first '{' and last '}'
   const firstBrace = cleaned.indexOf('{');
   const lastBrace = cleaned.lastIndexOf('}');
-  
   if (firstBrace !== -1 && lastBrace > firstBrace) {
     return cleaned.substring(firstBrace, lastBrace + 1);
   }
-  
-  // Fallback: If regex matched in previous logic, rely on indexOf
   return text;
 };
 
-// Helper to get client instance dynamically
-const getClient = (apiKey: string) => {
-  return new GoogleGenAI({ apiKey });
+const getClient = (apiKey: string) => new GoogleGenAI({ apiKey });
+
+// Helper: Levenshtein Distance for simple typo tolerance locally
+const levenshteinDistance = (a: string, b: string): number => {
+  const matrix = [];
+  for (let i = 0; i <= b.length; i++) { matrix[i] = [i]; }
+  for (let j = 0; j <= a.length; j++) { matrix[0][j] = j; }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      if (b.charAt(i - 1) === a.charAt(j - 1)) {
+        matrix[i][j] = matrix[i - 1][j - 1];
+      } else {
+        matrix[i][j] = Math.min(
+          matrix[i - 1][j - 1] + 1,
+          Math.min(matrix[i][j - 1] + 1, matrix[i - 1][j] + 1)
+        );
+      }
+    }
+  }
+  return matrix[b.length][a.length];
 };
 
-export const generateRiddle = async (apiKey: string, avoidList: string[] = []): Promise<Riddle> => {
-  if (!apiKey) {
-    throw new Error("API Key belum disetting. Silakan masuk ke menu pengaturan.");
+const normalizeText = (text: string) => text.toLowerCase().trim().replace(/[.,/#!$%^&*;:{}=\-_`~()]/g, "");
+
+export const validateAnswerLocal = (riddle: Riddle, userAnswer: string): AnswerValidation | null => {
+  const user = normalizeText(userAnswer);
+  const key = normalizeText(riddle.answer);
+  
+  // 1. Exact Match on Answer
+  if (user === key) return { isCorrect: true, isClose: false, feedback: "Luar biasa! Jawaban kamu tepat sekali!" };
+
+  // 2. Check Accepted Answers (Synonyms - stored in DB)
+  if (riddle.acceptedAnswers && riddle.acceptedAnswers.length > 0) {
+    for (const alt of riddle.acceptedAnswers) {
+      if (normalizeText(alt) === user) return { isCorrect: true, isClose: false, feedback: "Mantap! Itu jawaban yang benar!" };
+    }
   }
 
+  // 3. Typo Tolerance
+  if (user.length > 3 && levenshteinDistance(user, key) <= 2) return { isCorrect: true, isClose: false, feedback: "Typo dikit nggak ngaruh, jawabanmu benar!" };
+  
+  if (riddle.acceptedAnswers) {
+    for (const alt of riddle.acceptedAnswers) {
+      const normAlt = normalizeText(alt);
+      if (normAlt.length > 3 && levenshteinDistance(user, normAlt) <= 2) return { isCorrect: true, isClose: false, feedback: "Typo dikit, tapi maksud kamu benar!" };
+    }
+  }
+
+  return null;
+};
+
+/**
+ * NEW: Analyzes user attempts to build a persona/style profile.
+ */
+export const analyzeUserPattern = async (apiKey: string, attempts: Attempt[]): Promise<string> => {
+    if (attempts.length < 3) return ""; // Not enough data
+
+    const ai = getClient(apiKey);
+    const model = "gemini-2.5-flash";
+
+    const attemptsText = attempts.map(a => 
+      `Q: ${a.riddleId.substring(0,10)}... | User: "${a.userAnswer}" | Correct: ${a.isCorrect}`
+    ).join("\n");
+
+    const prompt = `
+      Data Riwayat Jawaban User:
+      ${attemptsText}
+
+      Tugas: Analisa gaya menjawab user dalam 1 kalimat pendek.
+      Apakah dia sering typo? Suka pakai bahasa gaul? Suka menjawab panjang/pendek?
+      Output JSON: { "persona": "User suka..." }
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      const data = JSON.parse(cleanJSON(response.text || "{}"));
+      return data.persona || "";
+    } catch (e) {
+      console.warn("Analysis failed", e);
+      return "";
+    }
+};
+
+export const generateRiddle = async (
+  apiKey: string, 
+  history: string[] = [], 
+  userPersona: string = ""
+): Promise<Riddle> => {
+  if (!apiKey) throw new Error("API Key belum disetting.");
+
   const ai = getClient(apiKey);
-  // Menggunakan model stabil
   const model = "gemini-2.5-flash"; 
   
-  // Ambil maksimal 15 item terakhir untuk konteks (dikurangi agar hemat token)
-  const avoidContext = avoidList.length > 0 
-    ? `DAFTAR ID (HINDARI MEMBUAT SOAL YANG SAMA): ${avoidList.slice(-15).join(" || ")}.` 
+  const avoidContext = history.length > 0 
+    ? `HINDARI soalan yang mirip dengan: ${history.slice(-10).join(" || ")}.` 
     : "";
+
+  const personaContext = userPersona 
+    ? `PROFIL USER: "${userPersona}". Buat tebakan yang cocok dengan gaya user ini. Sesuaikan daftar sinonim (acceptedAnswers) dengan kebiasaan kata-kata user.`
+    : "Buat sinonim yang mencakup bahasa baku dan bahasa gaul sehari-hari.";
 
   const randomSeed = Math.floor(Math.random() * 9999999);
 
   const prompt = `
     Request ID: ${randomSeed}
-    Kategori: Campuran / Umum
     
-    Tugas:
-    Buat 1 (satu) tebak-tebakan dalam Bahasa Indonesia yang kreatif, lucu, atau sedikit "mikir" tapi menyenangkan.
-    Bisa berupa plesetan, logika sederhana, atau pengetahuan umum.
-    
+    Tugas: Buat 1 tebak-tebakan Indonesia kreatif.
+    ${personaContext}
     ${avoidContext}
 
-    Format Output (JSON):
+    Output JSON:
     {
-      "question": "Pertanyaan tebak-tebakan...",
-      "answer": "Jawaban (1-3 kata)",
-      "hint": "Petunjuk yang membantu",
-      "funFact": "Fakta singkat terkait jawaban"
+      "id": "generate_unique_string_id",
+      "question": "Pertanyaan...",
+      "answer": "Jawaban Utama",
+      "acceptedAnswers": ["variasi1", "variasi2", "istilah_gaul_user"],
+      "hint": "Petunjuk...",
+      "funFact": "Fakta..."
     }
-
-    Constraints:
-    - Jawaban HARUS spesifik (1-3 kata).
-    - HANYA return JSON Object. 
-    - Pastikan validitas JSON.
   `;
 
   try {
@@ -105,36 +166,31 @@ export const generateRiddle = async (apiKey: string, avoidList: string[] = []): 
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.8, // Slightly higher for variety since it's just random fun now
-        topK: 40,
-        maxOutputTokens: 1000, 
+        temperature: 0.85, // Higher temp for creativity
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            question: { type: Type.STRING, description: "Pertanyaan tebak-tebakan" },
-            answer: { type: Type.STRING, description: "Jawaban yang benar" },
-            hint: { type: Type.STRING, description: "Petunjuk" },
-            funFact: { type: Type.STRING, description: "Fakta unik terkait jawaban" }
+            id: { type: Type.STRING },
+            question: { type: Type.STRING },
+            answer: { type: Type.STRING },
+            acceptedAnswers: { type: Type.ARRAY, items: { type: Type.STRING } },
+            hint: { type: Type.STRING },
+            funFact: { type: Type.STRING }
           },
-          required: ["question", "answer", "hint", "funFact"]
+          required: ["question", "answer", "acceptedAnswers", "hint", "funFact"]
         }
       }
     });
 
     const jsonText = response.text;
-    if (!jsonText) throw new Error("Respons kosong dari AI.");
+    if (!jsonText) throw new Error("Respons kosong.");
     
-    // Clean text before parsing
-    const cleanedJson = cleanJSON(jsonText);
+    const data = JSON.parse(cleanJSON(jsonText));
+    // Ensure ID exists
+    if (!data.id) data.id = `riddle_${Date.now()}_${randomSeed}`;
     
-    // Validate if it looks like JSON
-    if (!cleanedJson.trim().startsWith('{')) {
-      console.error("Invalid JSON content:", jsonText);
-      throw new Error("AI merespon dengan format yang salah. Coba lagi.");
-    }
-    
-    return JSON.parse(cleanedJson) as Riddle;
+    return data as Riddle;
   } catch (error) {
     handleError(error);
   }
@@ -143,34 +199,29 @@ export const generateRiddle = async (apiKey: string, avoidList: string[] = []): 
 export const checkAnswer = async (
   apiKey: string,
   riddle: Riddle, 
-  userAnswer: string
+  userAnswer: string,
+  userPersona: string = ""
 ): Promise<AnswerValidation> => {
-  if (!apiKey) {
-    throw new Error("API Key belum disetting.");
-  }
-
   const ai = getClient(apiKey);
   const model = "gemini-2.5-flash";
 
   const prompt = `
-    Konteks Tebak-tebakan:
+    Konteks:
     Q: "${riddle.question}"
     A (Kunci): "${riddle.answer}"
+    Variasi: ${riddle.acceptedAnswers?.join(", ")}
+    Profil User: ${userPersona || "Umum"}
     
     Jawaban User: "${userAnswer}"
 
-    Tugas: Validasi jawaban user dengan output JSON.
-    
-    Logika Penilaian:
-    1. isCorrect: TRUE jika jawaban sama persis, sinonim, atau typo kecil.
-    2. isCorrect: FALSE & isClose: TRUE jika jawaban konsepnya benar tapi kata salah, kurang spesifik (misal: "mobil" vs "kendaraan"), atau mirip.
-    3. isCorrect: FALSE & isClose: FALSE jika jawaban salah total.
+    Tugas: Validasi jawaban user. 
+    User Profil membantu menentukan apakah user 'typo' atau memang punya gaya bahasa unik yang sebenarnya benar.
     
     Output JSON:
     {
       "isCorrect": boolean,
       "isClose": boolean,
-      "feedback": "komentar singkat seru/lucu/menyemangati"
+      "feedback": "komentar singkat"
     }
   `;
 
@@ -180,34 +231,14 @@ export const checkAnswer = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.5, // Lower temperature for stricter logic
-        maxOutputTokens: 500,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            isCorrect: { type: Type.BOOLEAN },
-            isClose: { type: Type.BOOLEAN, description: "True if answer is almost correct but not exact" },
-            feedback: { type: Type.STRING, description: "Komentar singkat tentang jawaban user" }
-          },
-          required: ["isCorrect", "isClose", "feedback"]
-        }
+        temperature: 0.3, 
+        responseMimeType: "application/json"
       }
     });
 
     const jsonText = response.text;
-    if (!jsonText) throw new Error("Respons kosong saat menilai jawaban.");
-
-    // Clean text before parsing
-    const cleanedJson = cleanJSON(jsonText);
-
-     // Validate if it looks like JSON
-    if (!cleanedJson.trim().startsWith('{')) {
-      console.error("Invalid JSON content checkAnswer:", jsonText);
-      throw new Error("AI merespon dengan format yang salah.");
-    }
-
-    return JSON.parse(cleanedJson) as AnswerValidation;
+    if (!jsonText) throw new Error("Respons kosong.");
+    return JSON.parse(cleanJSON(jsonText)) as AnswerValidation;
   } catch (error) {
     handleError(error);
   }
