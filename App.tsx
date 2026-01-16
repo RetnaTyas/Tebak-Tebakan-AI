@@ -1,13 +1,14 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Sparkles, EyeOff, Settings, Key, Lock, Eye, CheckCircle, AlertTriangle, XCircle, Play, UserCog, User } from 'lucide-react';
+import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Sparkles, EyeOff, Settings, Key, Lock, Eye, CheckCircle, AlertTriangle, XCircle, Play, UserCog, User, History } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 import Layout from './components/Layout';
 import Button from './components/Button';
 import ProfileModal from './components/ProfileModal';
+import GameLogModal from './components/GameLogModal';
 import { generateRiddle, checkAnswer, validateAnswerLocal, analyzeUserPattern } from './services/geminiService';
-import { GameState, Riddle, PlayerStats, UserProfile } from './types';
+import { GameState, Riddle, PlayerStats, UserProfile, GameLogEntry } from './types';
 import * as dbService from './services/storage';
 
 const INITIAL_STATS: PlayerStats = {
@@ -35,6 +36,8 @@ export default function App() {
   
   // UI States
   const [showProfile, setShowProfile] = useState(false);
+  const [showLog, setShowLog] = useState(false);
+  const [gameLog, setGameLog] = useState<GameLogEntry[]>([]);
 
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
@@ -42,7 +45,6 @@ export default function App() {
   const [showKey, setShowKey] = useState(false);
 
   const nextRiddlePromise = useRef<Promise<Riddle> | null>(null);
-  const attemptCountRef = useRef(0);
   
   // Initialization
   useEffect(() => {
@@ -52,6 +54,9 @@ export default function App() {
 
     const savedHistory = localStorage.getItem('tebak_ai_history');
     if (savedHistory) setHistory(JSON.parse(savedHistory));
+
+    const savedLog = localStorage.getItem('tebak_ai_gamelog');
+    if (savedLog) setGameLog(JSON.parse(savedLog));
 
     const savedKey = localStorage.getItem('tebak_ai_apikey');
     const keyToUse = savedKey || '';
@@ -75,6 +80,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('tebak_ai_history', JSON.stringify(history));
   }, [history]);
+
+  useEffect(() => {
+    localStorage.setItem('tebak_ai_gamelog', JSON.stringify(gameLog));
+  }, [gameLog]);
 
   // Logic Analisa User Pattern
   const performAnalysis = async () => {
@@ -126,7 +135,6 @@ export default function App() {
     setStats({ ...INITIAL_STATS, highScore: stats.highScore });
     setErrorMsg(null);
     nextRiddlePromise.current = null;
-    attemptCountRef.current = 0;
     setGameState(GameState.LOADING);
     await loadNewRiddle();
   };
@@ -172,6 +180,20 @@ export default function App() {
     }
   };
 
+  const addToLog = (status: ResultStatus) => {
+    if (!currentRiddle) return;
+    const newEntry: GameLogEntry = {
+      id: Date.now(),
+      question: currentRiddle.question,
+      userAnswer: userAnswer,
+      correctAnswer: currentRiddle.answer,
+      status: status,
+      timestamp: Date.now()
+    };
+    // Keep last 50 entries to avoid bloating local storage
+    setGameLog(prev => [newEntry, ...prev].slice(0, 50));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!userAnswer.trim() || !currentRiddle) return;
@@ -196,17 +218,23 @@ export default function App() {
         feedback: fb,
         timestamp: Date.now()
       });
-      attemptCountRef.current += 1;
 
-      // Check for analysis trigger strictly based on count
-      if (attemptCountRef.current > 0 && attemptCountRef.current % 5 === 0) {
-        performAnalysis(); // Fire and forget (background)
+      // TRIGGER ANALISA BERDASARKAN TOTAL DATA DI DB
+      // Agar tidak hilang saat refresh
+      try {
+        const totalAttempts = await dbService.getAttemptCount();
+        if (totalAttempts > 0 && totalAttempts % 5 === 0) {
+          performAnalysis(); // Fire and forget (background)
+        }
+      } catch (e) {
+        console.warn("Failed to check attempt count", e);
       }
     };
 
     if (localValidation) {
         setFeedback(localValidation.feedback);
         setResultStatus('CORRECT');
+        addToLog('CORRECT');
         await saveAttempt(true, localValidation.feedback);
         handleSuccess();
         return;
@@ -226,12 +254,15 @@ export default function App() {
           await dbService.updateRiddleSynonyms(currentRiddle.id, userAnswer);
           
           setResultStatus('CORRECT');
+          addToLog('CORRECT');
           handleSuccess();
         } else if (result.isClose) {
           setResultStatus('CLOSE');
+          addToLog('CLOSE');
           handleFailure();
         } else {
           setResultStatus('WRONG');
+          addToLog('WRONG');
           handleFailure();
         }
     } catch (e: any) {
@@ -316,10 +347,13 @@ export default function App() {
   const renderMenu = () => (
     <div className="w-full max-w-2xl flex flex-col gap-8 animate-fade-in items-center">
       <div className="absolute top-4 right-4 z-20 flex gap-2">
-           <button onClick={() => setShowProfile(true)} className="p-3 rounded-full backdrop-blur-md transition-all border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-violet-400 hover:bg-slate-700/80 hover:border-violet-500/50">
+           <button onClick={() => setShowLog(true)} className="p-3 rounded-full backdrop-blur-md transition-all border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-blue-400 hover:bg-slate-700/80 hover:border-blue-500/50" title="Riwayat Permainan">
+            <History size={20} />
+          </button>
+           <button onClick={() => setShowProfile(true)} className="p-3 rounded-full backdrop-blur-md transition-all border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-violet-400 hover:bg-slate-700/80 hover:border-violet-500/50" title="Profil & Persona">
             <User size={20} />
           </button>
-          <button onClick={() => setGameState(GameState.SETTINGS)} className={`p-3 rounded-full backdrop-blur-md transition-all border ${!apiKey ? 'bg-red-500/20 border-red-500 text-red-200 animate-pulse' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`}>
+          <button onClick={() => setGameState(GameState.SETTINGS)} className={`p-3 rounded-full backdrop-blur-md transition-all border ${!apiKey ? 'bg-red-500/20 border-red-500 text-red-200 animate-pulse' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`} title="Pengaturan">
             <Settings size={20} />
           </button>
       </div>
@@ -492,6 +526,11 @@ export default function App() {
         onClose={() => setShowProfile(false)} 
         stats={stats} 
         persona={userPersona} 
+      />
+      <GameLogModal 
+        isOpen={showLog}
+        onClose={() => setShowLog(false)}
+        logs={gameLog}
       />
       {gameState === GameState.MENU && renderMenu()}
       {gameState === GameState.SETTINGS && renderSettings()}

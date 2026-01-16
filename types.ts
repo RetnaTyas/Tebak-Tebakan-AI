@@ -48,3 +48,12 @@ export interface PlayerStats {
   lives: number;
   highScore: number;
 }
+
+export interface GameLogEntry {
+  id: number;
+  question: string;
+  userAnswer: string;
+  correctAnswer: string;
+  status: 'CORRECT' | 'CLOSE' | 'WRONG';
+  timestamp: number;
+}

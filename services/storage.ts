@@ -74,6 +74,11 @@ export const saveAttemptToDB = async (attempt: Attempt) => {
   await db.add('attempts', attempt);
 };
 
+export const getAttemptCount = async () => {
+  const db = await initDB();
+  return db.count('attempts');
+};
+
 export const getRecentAttempts = async (limit: number = 20) => {
   const db = await initDB();
   // Get all attempts, sort by ID descending (newest first)
