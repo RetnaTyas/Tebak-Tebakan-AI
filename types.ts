@@ -15,6 +15,7 @@ export interface AnswerValidation {
 
 export enum GameState {
   MENU = 'MENU',
+  SETTINGS = 'SETTINGS',
   LOADING = 'LOADING',
   PLAYING = 'PLAYING',
   CHECKING = 'CHECKING',

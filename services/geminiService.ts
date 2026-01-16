@@ -1,50 +1,66 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { Category, Riddle, AnswerValidation } from "../types";
 
-const apiKey = process.env.API_KEY;
-if (!apiKey) {
-  console.error("API_KEY is missing from environment variables.");
-}
-
-// Strictly use process.env.API_KEY without dummy fallback
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 const SYSTEM_INSTRUCTION = `
 Kamu adalah Game Master yang seru, lucu, dan pintar untuk permainan tebak-tebakan (riddles) dalam Bahasa Indonesia.
 Tugasmu adalah membuat tebak-tebakan yang menarik dan kreatif, serta menilai jawaban pemain dengan adil tapi santai.
 Gunakan bahasa Indonesia yang gaul, seru, namun tetap sopan.
 `;
 
-export const generateRiddle = async (category: Category, avoidList: string[] = [], isHardMode: boolean = false): Promise<Riddle> => {
+// Fallback riddles jika API error
+const FALLBACK_RIDDLES: Riddle[] = [
+  { question: "Apa yang makin diisi makin ringan?", answer: "Balon", hint: "Bisa terbang.", funFact: "Balon gas pertama ditemukan 1783." },
+  { question: "Punya gigi tapi nggak bisa makan?", answer: "Sisir", hint: "Buat rambut.", funFact: "Sisir tertua ditemukan 5000 tahun lalu." },
+  { question: "Masuk miring, keluar miring?", answer: "Kancing", hint: "Ada di baju.", funFact: "Kancing baju pria dan wanita beda sisi." },
+  { question: "Benda apa yang kalau dipotong malah makin tinggi?", answer: "Celana", hint: "Dipakai di kaki.", funFact: "Celana panjang dulu simbol status sosial." }
+];
+
+// Helper to get client instance dynamically
+const getClient = (apiKey: string) => {
+  return new GoogleGenAI({ apiKey });
+};
+
+export const generateRiddle = async (apiKey: string, category: Category, avoidList: string[] = [], isHardMode: boolean = false): Promise<Riddle> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing");
+  }
+
+  const ai = getClient(apiKey);
   const model = "gemini-2.5-flash-lite-preview-02-05";
   
   let promptCategory = category === 'Acak' ? 'apa saja (campuran)' : category;
   
-  // Ambil maksimal 15 item terakhir untuk menghemat token konteks
+  // Ambil maksimal 20 item terakhir
   const avoidContext = avoidList.length > 0 
-    ? `DAFTAR TERLARANG (Jangan buat yang mirip ini): ${avoidList.slice(-15).join("; ")}.` 
+    ? `DAFTAR TERLARANG (JANGAN BUAT YANG ADA DI SINI): ${avoidList.slice(-20).join(" || ")}.` 
     : "";
 
   const difficultyInstruction = isHardMode
-    ? "LEVEL: HARD MODE. Buat tebak-tebakan yang SANGAT SULIT, MENJEBAK, membutuhkan LOGIKA LATERAL atau PEMIKIRAN KRITIS TINGGI. Jangan berikan tebakan anak-anak yang mudah. Jawaban harus tetap masuk akal tapi tidak terpikirkan secara langsung."
-    : "LEVEL: NORMAL. Buat tebak-tebakan yang UNIK, KREATIF, dan JARANG ORANG TAHU, tapi masih bisa ditebak dengan logika umum.";
+    ? "LEVEL: HARD MODE. Buat tebak-tebakan yang SANGAT SULIT, MENJEBAK, twist logic, atau play-on-words. Jawaban harus tetap masuk akal tapi tidak terpikirkan secara langsung."
+    : "LEVEL: NORMAL. Buat tebak-tebakan yang UNIK, KREATIF, dan JARANG ORANG TAHU.";
+
+  // Tambahkan random seed di prompt untuk memaksa variasi output setiap request
+  const randomSeed = Math.floor(Math.random() * 9999999);
 
   const prompt = `
+    [Request ID: ${randomSeed}]
     Tugas: Buatkan 1 (satu) tebak-tebakan kategori "${promptCategory}".
+    
     ${difficultyInstruction}
     
     ${avoidContext}
 
     Instruksi Khusus:
-    1. Pastikan jawabannya spesifik (1-3 kata).
-    2. Hindari tebakan "bapak-bapak" yang garing kecuali kategori Lucu.
-    3. Output harus format JSON valid.
+    1. JANGAN PERNAH MENGULANG tebak-tebakan dari "DAFTAR TERLARANG".
+    2. Pastikan jawabannya spesifik (1-3 kata).
+    3. Hindari tebakan "bapak-bapak" yang garing kecuali kategori Lucu.
+    4. Output harus format JSON valid.
     
     Sertakan:
     - question: Pertanyaannya.
     - answer: Jawaban (1-3 kata).
-    - hint: Petunjuk yang membantu (jika Normal) atau Petunjuk yang sangat samar/kriptik (jika Hard Mode).
-    - funFact: Fakta unik/ilmiah/sejarah singkat terkait jawaban tersebut.
+    - hint: Petunjuk (Sangat samar jika Hard Mode).
+    - funFact: Fakta unik singkat.
   `;
 
   try {
@@ -53,6 +69,9 @@ export const generateRiddle = async (category: Category, avoidList: string[] = [
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: 1.2, // Tingkatkan kreativitas agar tidak repetitif
+        topK: 40,
+        maxOutputTokens: 200, // Limit token for speed
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -73,19 +92,21 @@ export const generateRiddle = async (category: Category, avoidList: string[] = [
     return JSON.parse(jsonText) as Riddle;
   } catch (error) {
     console.error("Error generating riddle:", error);
-    return {
-      question: "Apa yang makin diisi makin ringan?",
-      answer: "Balon",
-      hint: "Benda ini bisa terbang.",
-      funFact: "Balon pertama kali ditemukan oleh Michael Faraday pada tahun 1824."
-    };
+    // Return random fallback
+    return FALLBACK_RIDDLES[Math.floor(Math.random() * FALLBACK_RIDDLES.length)];
   }
 };
 
 export const checkAnswer = async (
+  apiKey: string,
   riddle: Riddle, 
   userAnswer: string
 ): Promise<AnswerValidation> => {
+  if (!apiKey) {
+    throw new Error("API Key is missing");
+  }
+
+  const ai = getClient(apiKey);
   const model = "gemini-2.5-flash-lite-preview-02-05";
 
   const prompt = `
@@ -94,10 +115,10 @@ export const checkAnswer = async (
     Jawaban Pemain: "${userAnswer}"
 
     Tugasmu:
-    1. Tentukan apakah jawaban pemain benar secara makna (sinonim, atau ejaan mirip diperbolehkan).
-    2. Jika benar, berikan pujian singkat yang lucu.
+    1. Tentukan apakah jawaban pemain benar secara makna (sinonim, slang umum, atau ejaan mirip diperbolehkan).
+    2. Jika benar, berikan pujian singkat yang lucu/gaul.
     3. Jika salah, berikan ledekan halus atau semangat singkat.
-    4. Jika "dikit lagi" (misal typo dikit atau hampir benar), anggap SALAH tapi berikan feedback bahwa itu sudah dekat.
+    4. Jika "dikit lagi" (misal typo dikit atau konsep hampir kena), anggap SALAH tapi berikan feedback bahwa itu sudah dekat.
     
     Output JSON.
   `;
@@ -108,6 +129,8 @@ export const checkAnswer = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
+        temperature: 0.8,
+        maxOutputTokens: 100, // Limit token for speed
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -128,34 +151,15 @@ export const checkAnswer = async (
     console.error("Error checking answer:", error);
     const normalizedUser = userAnswer.toLowerCase().trim();
     const normalizedKey = riddle.answer.toLowerCase().trim();
-    const isCorrect = normalizedUser === normalizedKey || normalizedUser.includes(normalizedKey);
+    
+    // Simple basic check for offline/error fallback
+    const isCorrect = normalizedUser === normalizedKey || 
+                      (normalizedUser.length > 3 && normalizedKey.includes(normalizedUser)) ||
+                      (normalizedKey.length > 3 && normalizedUser.includes(normalizedKey));
+                      
     return {
       isCorrect,
-      feedback: isCorrect ? "Benar! (Offline check)" : "Salah nih. Coba lagi! (Offline check)"
+      feedback: isCorrect ? "Mantap, bener banget! (Mode Offline)" : "Yah salah, coba lagi ya! (Mode Offline)"
     };
-  }
-};
-
-export const generateAppLogo = async (): Promise<string> => {
-  const model = "gemini-2.5-flash-image";
-  const prompt = "A cool 3D app icon for a riddle game named 'Tebak AI'. The design should feature a cute, glowing brain character or a stylized question mark wearing sunglasses. Use a dark background (hex #0f172a) to match the app theme, with vibrant neon accents in violet, pink, and blue. 3D render style, cute, modern, high quality, centered.";
-
-  try {
-    const response = await ai.models.generateContent({
-      model: model,
-      contents: {
-        parts: [{ text: prompt }]
-      }
-    });
-
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-      }
-    }
-    throw new Error("No image generated");
-  } catch (error) {
-    console.error("Error generating logo:", error);
-    throw error;
   }
 };

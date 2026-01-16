@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Image as ImageIcon, Sparkles, Zap, Skull, EyeOff } from 'lucide-react';
+import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Image as ImageIcon, Sparkles, Zap, Skull, EyeOff, Settings, Key, Lock, Eye, CheckCircle } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 import Layout from './components/Layout';
 import Button from './components/Button';
-import { generateRiddle, checkAnswer, generateAppLogo } from './services/geminiService';
+import { generateRiddle, checkAnswer } from './services/geminiService';
 import { GameState, Category, Riddle, PlayerStats } from './types';
 
 // Categories config
@@ -33,12 +33,18 @@ export default function App() {
   const [feedback, setFeedback] = useState<string>('');
   const [showHint, setShowHint] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
-  const [appLogo, setAppLogo] = useState<string | null>(null);
-  const [isGeneratingLogo, setIsGeneratingLogo] = useState(false);
   const [isHardMode, setIsHardMode] = useState(false);
   const [enableAnimation, setEnableAnimation] = useState(true);
   
-  // Load high score and history from local storage
+  // API Key State
+  const [apiKey, setApiKey] = useState<string>('');
+  const [inputApiKey, setInputApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+
+  // Ref to store the promise of the NEXT riddle for pre-fetching
+  const nextRiddlePromise = useRef<Promise<Riddle> | null>(null);
+  
+  // Load data from local storage
   useEffect(() => {
     const savedHigh = localStorage.getItem('tebak_ai_highscore');
     if (savedHigh) {
@@ -54,10 +60,12 @@ export default function App() {
       }
     }
 
-    const savedLogo = localStorage.getItem('tebak_ai_logo');
-    if (savedLogo) {
-      setAppLogo(savedLogo);
-    }
+    // Load API Key
+    const savedKey = localStorage.getItem('tebak_ai_apikey');
+    // Priority: LocalStorage -> Env Variable
+    const keyToUse = savedKey || process.env.API_KEY || '';
+    setApiKey(keyToUse);
+    setInputApiKey(keyToUse);
   }, []);
 
   useEffect(() => {
@@ -67,29 +75,42 @@ export default function App() {
     }
   }, [stats.score]);
 
-  // Save history whenever it changes
   useEffect(() => {
     localStorage.setItem('tebak_ai_history', JSON.stringify(history));
   }, [history]);
 
-  const handleGenerateLogo = async () => {
-    if (isGeneratingLogo) return;
-    setIsGeneratingLogo(true);
-    try {
-      const logo = await generateAppLogo();
-      setAppLogo(logo);
-      localStorage.setItem('tebak_ai_logo', logo);
-    } catch (error) {
-      console.error("Failed to generate logo", error);
-      alert("Gagal membuat logo. Coba lagi nanti!");
-    } finally {
-      setIsGeneratingLogo(false);
+  const handleSaveApiKey = () => {
+    if (inputApiKey.trim()) {
+      localStorage.setItem('tebak_ai_apikey', inputApiKey.trim());
+      setApiKey(inputApiKey.trim());
+      setGameState(GameState.MENU);
+      alert("API Key berhasil disimpan!");
+    } else {
+      // Allow clearing the key
+      localStorage.removeItem('tebak_ai_apikey');
+      setApiKey('');
+      alert("API Key dihapus.");
     }
   };
 
+  // Function to start pre-loading the next riddle in the background
+  const preloadNextRiddle = (cat: Category, currentHistory: string[], key: string) => {
+    if (!key) return;
+    nextRiddlePromise.current = generateRiddle(key, cat, currentHistory, isHardMode);
+    console.log("Preloading next riddle...");
+  };
+
   const startGame = async (selectedCategory: Category) => {
+    if (!apiKey) {
+        setGameState(GameState.SETTINGS);
+        return;
+    }
+
     setCategory(selectedCategory);
     setStats({ ...INITIAL_STATS, highScore: stats.highScore });
+    
+    nextRiddlePromise.current = null;
+    
     setGameState(GameState.LOADING);
     await loadNewRiddle(selectedCategory);
   };
@@ -101,24 +122,28 @@ export default function App() {
       setUserAnswer('');
       setFeedback('');
       
-      // Pass history and hardMode flag
-      const riddle = await generateRiddle(cat, history, isHardMode);
+      let riddle: Riddle;
+
+      if (nextRiddlePromise.current) {
+        riddle = await nextRiddlePromise.current;
+        nextRiddlePromise.current = null;
+      } else {
+        riddle = await generateRiddle(apiKey, cat, history, isHardMode);
+      }
       
       setCurrentRiddle(riddle);
       
-      // Add new riddle to history (store question + answer to be specific)
-      setHistory(prev => {
-        const newItem = `${riddle.question} (${riddle.answer})`;
-        // Keep history size manageable (last 50 items)
-        const newHistory = [...prev, newItem];
-        if (newHistory.length > 50) return newHistory.slice(newHistory.length - 50);
-        return newHistory;
-      });
+      const newItem = `${riddle.question} (${riddle.answer})`;
+      const newHistory = [...history, newItem];
+      if (newHistory.length > 50) newHistory.shift(); 
+      setHistory(newHistory);
+
+      preloadNextRiddle(cat, newHistory, apiKey);
 
       setGameState(GameState.PLAYING);
     } catch (e) {
       console.error(e);
-      setFeedback("Gagal memuat pertanyaan. Coba lagi ya.");
+      setFeedback("Gagal memuat pertanyaan. Cek koneksi atau API Key.");
       setGameState(GameState.MENU);
     }
   };
@@ -128,7 +153,7 @@ export default function App() {
     if (!userAnswer.trim() || !currentRiddle) return;
 
     setGameState(GameState.CHECKING);
-    const result = await checkAnswer(currentRiddle, userAnswer);
+    const result = await checkAnswer(apiKey, currentRiddle, userAnswer);
 
     setFeedback(result.feedback);
 
@@ -147,7 +172,6 @@ export default function App() {
       colors: ['#8b5cf6', '#ec4899', '#3b82f6']
     });
     
-    // Higher score for hard mode
     const basePoints = isHardMode ? 20 : 10;
     const streakBonus = stats.streak * (isHardMode ? 3 : 2);
 
@@ -174,6 +198,7 @@ export default function App() {
 
   const handleExit = () => {
     setGameState(GameState.MENU);
+    nextRiddlePromise.current = null;
   };
 
   const speak = (text: string) => {
@@ -187,35 +212,97 @@ export default function App() {
 
   // --- Render Functions ---
 
+  const renderSettings = () => (
+    <div className="w-full max-w-md flex flex-col gap-6 animate-fade-in">
+        <div className="flex items-center gap-3 text-slate-200 mb-2">
+            <Button variant="ghost" className="p-2" onClick={() => setGameState(GameState.MENU)}>
+                <Home size={20} />
+            </Button>
+            <h2 className="text-2xl font-bold">Pengaturan API Key</h2>
+        </div>
+
+        <div className="bg-slate-800/50 p-6 rounded-3xl border border-slate-700/50 backdrop-blur-md shadow-xl">
+            <div className="flex flex-col gap-4">
+                <div className="bg-blue-500/10 border border-blue-500/20 p-4 rounded-xl text-sm text-blue-200 flex gap-3">
+                    <Key size={24} className="shrink-0 text-blue-400" />
+                    <p>
+                        Aplikasi ini membutuhkan <strong>Gemini API Key</strong> agar bisa berjalan. 
+                        Key Anda disimpan aman di browser (Local Storage) dan tidak dikirim ke server kami.
+                    </p>
+                </div>
+
+                <div className="flex flex-col gap-2">
+                    <label className="text-slate-400 text-sm font-bold uppercase tracking-wider ml-1">
+                        Masukkan API Key
+                    </label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
+                            <Lock size={18} />
+                        </div>
+                        <input 
+                            type={showKey ? "text" : "password"}
+                            value={inputApiKey}
+                            onChange={(e) => setInputApiKey(e.target.value)}
+                            placeholder="Contoh: AIzaSy..."
+                            className="w-full bg-slate-900 border border-slate-700 focus:border-violet-500 text-white rounded-xl pl-10 pr-10 py-3 outline-none transition-all"
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => setShowKey(!showKey)}
+                            className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300"
+                        >
+                            {showKey ? <EyeOff size={18} /> : <Eye size={18} />}
+                        </button>
+                    </div>
+                </div>
+
+                <Button onClick={handleSaveApiKey} className="w-full mt-2">
+                    <CheckCircle size={20} /> Simpan Key
+                </Button>
+
+                <div className="text-center mt-4">
+                    <p className="text-slate-400 text-sm mb-2">Belum punya key?</p>
+                    <a 
+                        href="https://aistudio.google.com/app/apikey" 
+                        target="_blank" 
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-2 text-violet-400 hover:text-violet-300 font-bold text-sm bg-violet-500/10 px-4 py-2 rounded-full border border-violet-500/20 transition-all hover:bg-violet-500/20"
+                    >
+                        Dapatkan Key Gratis di Google AI Studio <ChevronRight size={14} />
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+  );
+
   const renderMenu = () => (
     <div className="w-full max-w-2xl flex flex-col gap-8 animate-fade-in items-center">
-      <div className="text-center space-y-4 w-full flex flex-col items-center">
-        {appLogo ? (
-           <div className="relative group w-48 h-48 mx-auto mb-4">
-             <img src={appLogo} alt="App Logo" className="w-full h-full object-contain rounded-3xl shadow-2xl shadow-violet-500/20" />
-             <button 
-                onClick={handleGenerateLogo}
-                disabled={isGeneratingLogo}
-                className="absolute bottom-2 right-2 p-2 bg-slate-900/80 backdrop-blur text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity border border-white/10 hover:bg-violet-600"
-                title="Generate Logo Baru"
-             >
-               {isGeneratingLogo ? <RefreshCw size={16} className="animate-spin" /> : <RefreshCw size={16} />}
-             </button>
-           </div>
-        ) : (
-          <div className="mb-4">
-             <Button variant="secondary" onClick={handleGenerateLogo} isLoading={isGeneratingLogo} className="text-sm py-2 px-4 rounded-full">
-               <Sparkles size={16} /> Bikin Logo AI
-             </Button>
-          </div>
-        )}
+      <div className="absolute top-4 right-4 z-20">
+          <button 
+            onClick={() => setGameState(GameState.SETTINGS)}
+            className={`p-3 rounded-full backdrop-blur-md transition-all border ${!apiKey ? 'bg-red-500/20 border-red-500 text-red-200 animate-pulse' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`}
+            title="Pengaturan API Key"
+          >
+            <Settings size={20} />
+          </button>
+      </div>
 
+      <div className="text-center space-y-4 w-full flex flex-col items-center pt-8">
         <h1 className="text-5xl md:text-7xl font-black text-transparent bg-clip-text bg-gradient-to-r from-violet-400 via-fuchsia-400 to-orange-400 drop-shadow-sm tracking-tight py-2">
           Tebak AI
         </h1>
         <p className="text-lg text-slate-300 max-w-md mx-auto">
           Mode Tanpa Batas! Pilih kategori dan main sepuasnya.
         </p>
+
+        {/* Setup Warning */}
+        {!apiKey && (
+            <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-6 py-3 rounded-2xl flex items-center gap-3 max-w-md animate-bounce cursor-pointer hover:bg-red-500/20 transition-colors" onClick={() => setGameState(GameState.SETTINGS)}>
+                <Key size={20} />
+                <span className="font-bold">Setup API Key dulu yuk!</span>
+            </div>
+        )}
 
         {/* Toggles Container */}
         <div className="flex flex-wrap justify-center gap-3">
@@ -486,6 +573,7 @@ export default function App() {
   return (
     <Layout enableAnimation={enableAnimation}>
       {gameState === GameState.MENU && renderMenu()}
+      {gameState === GameState.SETTINGS && renderSettings()}
       {gameState === GameState.LOADING && (
          <div className="flex flex-col items-center gap-4 animate-pulse">
             <div className="w-16 h-16 border-4 border-violet-500 border-t-transparent rounded-full animate-spin"></div>
