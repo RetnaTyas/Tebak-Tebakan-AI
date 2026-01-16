@@ -72,18 +72,10 @@ export default function App() {
     localStorage.setItem('tebak_ai_history', JSON.stringify(history));
   }, [history]);
 
-  // Background Analysis Loop
-  useEffect(() => {
-    if (!apiKey) return;
-    
-    // Check if we should analyze user pattern (every 5 attempts)
-    if (attemptCountRef.current > 0 && attemptCountRef.current % 5 === 0) {
-      performAnalysis();
-    }
-  }, [stats.score, stats.streak]); // Trigger roughly after answers
-
+  // Logic Analisa User Pattern
   const performAnalysis = async () => {
-    if (isAnalyzing) return;
+    if (isAnalyzing || !apiKey) return;
+    
     setIsAnalyzing(true);
     try {
       const attempts = await dbService.getRecentAttempts(20);
@@ -201,6 +193,11 @@ export default function App() {
         timestamp: Date.now()
       });
       attemptCountRef.current += 1;
+
+      // Check for analysis trigger strictly based on count
+      if (attemptCountRef.current > 0 && attemptCountRef.current % 5 === 0) {
+        performAnalysis(); // Fire and forget (background)
+      }
     };
 
     if (localValidation) {
@@ -326,9 +323,9 @@ export default function App() {
         <p className="text-lg text-slate-300 max-w-md mx-auto">Tantangan Tebak-tebakan Seru Tanpa Batas!</p>
         
         {userPersona && (
-           <div className="flex items-center gap-2 text-xs bg-violet-500/10 border border-violet-500/20 px-3 py-1 rounded-full text-violet-300">
-             <UserCog size={14} />
-             <span>AI Learning: "{userPersona.substring(0, 30)}..."</span>
+           <div className="flex items-center gap-2 text-xs bg-violet-500/10 border border-violet-500/20 px-3 py-1 rounded-full text-violet-300 animate-fade-in">
+             <UserCog size={14} className="text-violet-400" />
+             <span>AI: "{userPersona.substring(0, 35)}{userPersona.length > 35 ? '...' : ''}"</span>
            </div>
         )}
 
@@ -377,7 +374,12 @@ export default function App() {
           <div className="flex items-center gap-2 text-yellow-400 font-bold bg-slate-900/50 px-3 py-1 rounded-full"><Star size={18} fill="currentColor" /> {stats.score}</div>
         </div>
         <div className="flex items-center gap-3">
-          {isAnalyzing && <div className="animate-pulse text-xs text-violet-300">AI Learning...</div>}
+          {isAnalyzing && (
+            <div className="flex items-center gap-1.5 animate-pulse bg-violet-500/10 px-2 py-1 rounded-md border border-violet-500/20">
+              <UserCog size={12} className="text-violet-400" />
+              <span className="text-xs font-semibold text-violet-300 tracking-wide">Menganalisa Gaya...</span>
+            </div>
+          )}
           <button onClick={handleExit} className="p-2 rounded-full bg-slate-700/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors" title="Ke Menu Utama"><Home size={18} /></button>
         </div>
       </div>
