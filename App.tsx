@@ -1,10 +1,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Sparkles, EyeOff, Settings, Key, Lock, Eye, CheckCircle, AlertTriangle, XCircle, Play, UserCog } from 'lucide-react';
+import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Sparkles, EyeOff, Settings, Key, Lock, Eye, CheckCircle, AlertTriangle, XCircle, Play, UserCog, User } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 import Layout from './components/Layout';
 import Button from './components/Button';
+import ProfileModal from './components/ProfileModal';
 import { generateRiddle, checkAnswer, validateAnswerLocal, analyzeUserPattern } from './services/geminiService';
 import { GameState, Riddle, PlayerStats, UserProfile } from './types';
 import * as dbService from './services/storage';
@@ -32,6 +33,9 @@ export default function App() {
   const [userPersona, setUserPersona] = useState<string>("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   
+  // UI States
+  const [showProfile, setShowProfile] = useState(false);
+
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
   const [inputApiKey, setInputApiKey] = useState('');
@@ -311,7 +315,10 @@ export default function App() {
 
   const renderMenu = () => (
     <div className="w-full max-w-2xl flex flex-col gap-8 animate-fade-in items-center">
-      <div className="absolute top-4 right-4 z-20">
+      <div className="absolute top-4 right-4 z-20 flex gap-2">
+           <button onClick={() => setShowProfile(true)} className="p-3 rounded-full backdrop-blur-md transition-all border bg-slate-800/50 border-slate-700 text-slate-400 hover:text-violet-400 hover:bg-slate-700/80 hover:border-violet-500/50">
+            <User size={20} />
+          </button>
           <button onClick={() => setGameState(GameState.SETTINGS)} className={`p-3 rounded-full backdrop-blur-md transition-all border ${!apiKey ? 'bg-red-500/20 border-red-500 text-red-200 animate-pulse' : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:text-white hover:bg-slate-700'}`}>
             <Settings size={20} />
           </button>
@@ -323,10 +330,16 @@ export default function App() {
         <p className="text-lg text-slate-300 max-w-md mx-auto">Tantangan Tebak-tebakan Seru Tanpa Batas!</p>
         
         {userPersona && (
-           <div className="flex items-center gap-2 text-xs bg-violet-500/10 border border-violet-500/20 px-3 py-1 rounded-full text-violet-300 animate-fade-in">
-             <UserCog size={14} className="text-violet-400" />
-             <span>AI: "{userPersona.substring(0, 35)}{userPersona.length > 35 ? '...' : ''}"</span>
-           </div>
+           <button onClick={() => setShowProfile(true)} className="group flex items-center gap-3 bg-slate-800/60 hover:bg-slate-800 border border-slate-700 hover:border-violet-500/50 px-4 py-2 rounded-full transition-all duration-300 animate-fade-in shadow-sm hover:shadow-violet-500/10">
+             <div className="bg-violet-500/20 p-1.5 rounded-full text-violet-400 group-hover:scale-110 transition-transform">
+                <UserCog size={16} />
+             </div>
+             <div className="flex flex-col items-start text-left">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">AI Persona</span>
+                <span className="text-xs text-slate-200 font-medium line-clamp-1 max-w-[200px]">{userPersona}</span>
+             </div>
+             <ChevronRight size={14} className="text-slate-500 group-hover:text-white group-hover:translate-x-1 transition-all" />
+           </button>
         )}
 
         {errorMsg && (
@@ -474,6 +487,12 @@ export default function App() {
 
   return (
     <Layout enableAnimation={enableAnimation}>
+      <ProfileModal 
+        isOpen={showProfile} 
+        onClose={() => setShowProfile(false)} 
+        stats={stats} 
+        persona={userPersona} 
+      />
       {gameState === GameState.MENU && renderMenu()}
       {gameState === GameState.SETTINGS && renderSettings()}
       {gameState === GameState.LOADING && (
