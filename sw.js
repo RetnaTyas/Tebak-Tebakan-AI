@@ -1,4 +1,4 @@
-const CACHE_NAME = 'tebak-ai-v2';
+const CACHE_NAME = 'tebak-ai-v3';
 const PRECACHE_URLS = [
   './',
   './index.html',
@@ -29,6 +29,8 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
+  // Hanya cache request GET (asset, html, css, js)
+  // Jangan cache request POST (API calls ke Gemini)
   if (event.request.method !== 'GET') return;
 
   event.respondWith(

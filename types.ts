@@ -1,4 +1,5 @@
-export type Category = 'Lucu' | 'Logika' | 'Hewan' | 'Benda' | 'Acak' | 'Pengetahuan Umum';
+
+export type Category = 'Acak';
 
 export interface Riddle {
   question: string;

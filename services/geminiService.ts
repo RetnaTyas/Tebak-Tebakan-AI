@@ -1,66 +1,102 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
-import { Category, Riddle, AnswerValidation } from "../types";
+import { Riddle, AnswerValidation } from "../types";
 
 const SYSTEM_INSTRUCTION = `
-Kamu adalah Game Master yang seru, lucu, dan pintar untuk permainan tebak-tebakan (riddles) dalam Bahasa Indonesia.
-Tugasmu adalah membuat tebak-tebakan yang menarik dan kreatif, serta menilai jawaban pemain dengan adil tapi santai.
-Gunakan bahasa Indonesia yang gaul, seru, namun tetap sopan.
+Berperanlah sebagai REST API Server yang hanya merespon dengan raw JSON.
+Tugas: Generate konten tebak-tebakan dalam Bahasa Indonesia.
+Rules:
+1. Output HANYA satu JSON object valid.
+2. JANGAN ada teks pengantar, penutup, atau Markdown code blocks (seperti \`\`\`json).
+3. Pastikan sintaks JSON valid (kutip ganda untuk key/value, escape characters jika perlu).
 `;
 
-// Fallback riddles jika API error
-const FALLBACK_RIDDLES: Riddle[] = [
-  { question: "Apa yang makin diisi makin ringan?", answer: "Balon", hint: "Bisa terbang.", funFact: "Balon gas pertama ditemukan 1783." },
-  { question: "Punya gigi tapi nggak bisa makan?", answer: "Sisir", hint: "Buat rambut.", funFact: "Sisir tertua ditemukan 5000 tahun lalu." },
-  { question: "Masuk miring, keluar miring?", answer: "Kancing", hint: "Ada di baju.", funFact: "Kancing baju pria dan wanita beda sisi." },
-  { question: "Benda apa yang kalau dipotong malah makin tinggi?", answer: "Celana", hint: "Dipakai di kaki.", funFact: "Celana panjang dulu simbol status sosial." }
-];
+// Helper to parse and throw readable errors
+const handleError = (error: any): never => {
+  console.error("Gemini API Error:", error);
+  let message = "Terjadi kesalahan tidak terduga pada AI.";
+
+  const errString = error.toString();
+  
+  if (errString.includes("404") || (error.status === 404)) {
+    message = "Model AI tidak ditemukan (404). Mohon tunggu update developer.";
+  } else if (errString.includes("401") || errString.includes("API key") || (error.status === 401)) {
+    message = "API Key tidak valid. Cek kembali di Pengaturan.";
+  } else if (errString.includes("429") || (error.status === 429)) {
+    message = "Kuota API Key habis (Rate Limit). Tunggu sebentar atau ganti Key.";
+  } else if (errString.includes("fetch failed") || errString.includes("NetworkError")) {
+    message = "Gagal terhubung ke internet. Periksa koneksi Anda.";
+  } else if (errString.includes("JSON") || errString.includes("SyntaxError")) {
+    message = "Format data dari AI rusak. Coba lagi.";
+  } else if (error.message) {
+    message = `Gagal: ${error.message}`;
+  }
+
+  throw new Error(message);
+};
+
+// Helper to clean potential markdown or conversational prefixes
+const cleanJSON = (text: string): string => {
+  if (!text) return "";
+  
+  // 1. Remove Markdown Code Blocks patterns specifically
+  let cleaned = text.replace(/```json/gi, "").replace(/```/g, "");
+
+  // 2. Find first '{' and last '}'
+  const firstBrace = cleaned.indexOf('{');
+  const lastBrace = cleaned.lastIndexOf('}');
+  
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return cleaned.substring(firstBrace, lastBrace + 1);
+  }
+  
+  // Fallback: If regex matched in previous logic, rely on indexOf
+  return text;
+};
 
 // Helper to get client instance dynamically
 const getClient = (apiKey: string) => {
   return new GoogleGenAI({ apiKey });
 };
 
-export const generateRiddle = async (apiKey: string, category: Category, avoidList: string[] = [], isHardMode: boolean = false): Promise<Riddle> => {
+export const generateRiddle = async (apiKey: string, avoidList: string[] = []): Promise<Riddle> => {
   if (!apiKey) {
-    throw new Error("API Key is missing");
+    throw new Error("API Key belum disetting. Silakan masuk ke menu pengaturan.");
   }
 
   const ai = getClient(apiKey);
-  const model = "gemini-2.5-flash-lite-preview-02-05";
+  // Menggunakan model stabil
+  const model = "gemini-2.5-flash"; 
   
-  let promptCategory = category === 'Acak' ? 'apa saja (campuran)' : category;
-  
-  // Ambil maksimal 20 item terakhir
+  // Ambil maksimal 15 item terakhir untuk konteks (dikurangi agar hemat token)
   const avoidContext = avoidList.length > 0 
-    ? `DAFTAR TERLARANG (JANGAN BUAT YANG ADA DI SINI): ${avoidList.slice(-20).join(" || ")}.` 
+    ? `DAFTAR ID (HINDARI MEMBUAT SOAL YANG SAMA): ${avoidList.slice(-15).join(" || ")}.` 
     : "";
 
-  const difficultyInstruction = isHardMode
-    ? "LEVEL: HARD MODE. Buat tebak-tebakan yang SANGAT SULIT, MENJEBAK, twist logic, atau play-on-words. Jawaban harus tetap masuk akal tapi tidak terpikirkan secara langsung."
-    : "LEVEL: NORMAL. Buat tebak-tebakan yang UNIK, KREATIF, dan JARANG ORANG TAHU.";
-
-  // Tambahkan random seed di prompt untuk memaksa variasi output setiap request
   const randomSeed = Math.floor(Math.random() * 9999999);
 
   const prompt = `
-    [Request ID: ${randomSeed}]
-    Tugas: Buatkan 1 (satu) tebak-tebakan kategori "${promptCategory}".
+    Request ID: ${randomSeed}
+    Kategori: Campuran / Umum
     
-    ${difficultyInstruction}
+    Tugas:
+    Buat 1 (satu) tebak-tebakan dalam Bahasa Indonesia yang kreatif, lucu, atau sedikit "mikir" tapi menyenangkan.
+    Bisa berupa plesetan, logika sederhana, atau pengetahuan umum.
     
     ${avoidContext}
 
-    Instruksi Khusus:
-    1. JANGAN PERNAH MENGULANG tebak-tebakan dari "DAFTAR TERLARANG".
-    2. Pastikan jawabannya spesifik (1-3 kata).
-    3. Hindari tebakan "bapak-bapak" yang garing kecuali kategori Lucu.
-    4. Output harus format JSON valid.
-    
-    Sertakan:
-    - question: Pertanyaannya.
-    - answer: Jawaban (1-3 kata).
-    - hint: Petunjuk (Sangat samar jika Hard Mode).
-    - funFact: Fakta unik singkat.
+    Format Output (JSON):
+    {
+      "question": "Pertanyaan tebak-tebakan...",
+      "answer": "Jawaban (1-3 kata)",
+      "hint": "Petunjuk yang membantu",
+      "funFact": "Fakta singkat terkait jawaban"
+    }
+
+    Constraints:
+    - Jawaban HARUS spesifik (1-3 kata).
+    - HANYA return JSON Object. 
+    - Pastikan validitas JSON.
   `;
 
   try {
@@ -69,9 +105,9 @@ export const generateRiddle = async (apiKey: string, category: Category, avoidLi
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 1.2, // Tingkatkan kreativitas agar tidak repetitif
+        temperature: 0.8, // Slightly higher for variety since it's just random fun now
         topK: 40,
-        maxOutputTokens: 200, // Limit token for speed
+        maxOutputTokens: 1000, 
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -87,13 +123,20 @@ export const generateRiddle = async (apiKey: string, category: Category, avoidLi
     });
 
     const jsonText = response.text;
-    if (!jsonText) throw new Error("Empty response from Gemini");
+    if (!jsonText) throw new Error("Respons kosong dari AI.");
     
-    return JSON.parse(jsonText) as Riddle;
+    // Clean text before parsing
+    const cleanedJson = cleanJSON(jsonText);
+    
+    // Validate if it looks like JSON
+    if (!cleanedJson.trim().startsWith('{')) {
+      console.error("Invalid JSON content:", jsonText);
+      throw new Error("AI merespon dengan format yang salah. Coba lagi.");
+    }
+    
+    return JSON.parse(cleanedJson) as Riddle;
   } catch (error) {
-    console.error("Error generating riddle:", error);
-    // Return random fallback
-    return FALLBACK_RIDDLES[Math.floor(Math.random() * FALLBACK_RIDDLES.length)];
+    handleError(error);
   }
 };
 
@@ -103,24 +146,28 @@ export const checkAnswer = async (
   userAnswer: string
 ): Promise<AnswerValidation> => {
   if (!apiKey) {
-    throw new Error("API Key is missing");
+    throw new Error("API Key belum disetting.");
   }
 
   const ai = getClient(apiKey);
-  const model = "gemini-2.5-flash-lite-preview-02-05";
+  const model = "gemini-2.5-flash";
 
   const prompt = `
-    Pertanyaan: "${riddle.question}"
-    Jawaban Benar (Kunci): "${riddle.answer}"
-    Jawaban Pemain: "${userAnswer}"
-
-    Tugasmu:
-    1. Tentukan apakah jawaban pemain benar secara makna (sinonim, slang umum, atau ejaan mirip diperbolehkan).
-    2. Jika benar, berikan pujian singkat yang lucu/gaul.
-    3. Jika salah, berikan ledekan halus atau semangat singkat.
-    4. Jika "dikit lagi" (misal typo dikit atau konsep hampir kena), anggap SALAH tapi berikan feedback bahwa itu sudah dekat.
+    Konteks Tebak-tebakan:
+    Q: "${riddle.question}"
+    A (Kunci): "${riddle.answer}"
     
-    Output JSON.
+    Jawaban User: "${userAnswer}"
+
+    Tugas: Validasi jawaban user.
+    - Toleransi typo kecil atau sinonim dekat diperbolehkan.
+    - Jika jawaban user "mirip tapi salah" (misal: hampir benar tapi kurang tepat), anggap salah tapi beri semangat.
+    
+    Output JSON:
+    {
+      "isCorrect": boolean,
+      "feedback": "komentar singkat seru/lucu"
+    }
   `;
 
   try {
@@ -129,8 +176,8 @@ export const checkAnswer = async (
       contents: prompt,
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
-        temperature: 0.8,
-        maxOutputTokens: 100, // Limit token for speed
+        temperature: 0.7,
+        maxOutputTokens: 500,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.OBJECT,
@@ -144,22 +191,19 @@ export const checkAnswer = async (
     });
 
     const jsonText = response.text;
-    if (!jsonText) throw new Error("Empty response from Gemini");
+    if (!jsonText) throw new Error("Respons kosong saat menilai jawaban.");
 
-    return JSON.parse(jsonText) as AnswerValidation;
+    // Clean text before parsing
+    const cleanedJson = cleanJSON(jsonText);
+
+     // Validate if it looks like JSON
+    if (!cleanedJson.trim().startsWith('{')) {
+      console.error("Invalid JSON content checkAnswer:", jsonText);
+      throw new Error("AI merespon dengan format yang salah.");
+    }
+
+    return JSON.parse(cleanedJson) as AnswerValidation;
   } catch (error) {
-    console.error("Error checking answer:", error);
-    const normalizedUser = userAnswer.toLowerCase().trim();
-    const normalizedKey = riddle.answer.toLowerCase().trim();
-    
-    // Simple basic check for offline/error fallback
-    const isCorrect = normalizedUser === normalizedKey || 
-                      (normalizedUser.length > 3 && normalizedKey.includes(normalizedUser)) ||
-                      (normalizedKey.length > 3 && normalizedUser.includes(normalizedKey));
-                      
-    return {
-      isCorrect,
-      feedback: isCorrect ? "Mantap, bener banget! (Mode Offline)" : "Yah salah, coba lagi ya! (Mode Offline)"
-    };
+    handleError(error);
   }
 };

@@ -1,21 +1,12 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Image as ImageIcon, Sparkles, Zap, Skull, EyeOff, Settings, Key, Lock, Eye, CheckCircle } from 'lucide-react';
+import { Brain, Star, Trophy, RefreshCw, ChevronRight, HelpCircle, Lightbulb, Volume2, Home, Flame, Sparkles, EyeOff, Settings, Key, Lock, Eye, CheckCircle, AlertTriangle, XCircle, Play } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 import Layout from './components/Layout';
 import Button from './components/Button';
 import { generateRiddle, checkAnswer } from './services/geminiService';
-import { GameState, Category, Riddle, PlayerStats } from './types';
-
-// Categories config
-const CATEGORIES: { id: Category; icon: React.ReactNode; color: string }[] = [
-  { id: 'Lucu', icon: <span className="text-2xl">😂</span>, color: 'from-yellow-400 to-orange-500' },
-  { id: 'Logika', icon: <span className="text-2xl">🧠</span>, color: 'from-blue-400 to-indigo-500' },
-  { id: 'Hewan', icon: <span className="text-2xl">🦁</span>, color: 'from-green-400 to-emerald-600' },
-  { id: 'Benda', icon: <span className="text-2xl">📦</span>, color: 'from-purple-400 to-violet-600' },
-  { id: 'Pengetahuan Umum', icon: <span className="text-2xl">📚</span>, color: 'from-red-400 to-rose-600' },
-  { id: 'Acak', icon: <span className="text-2xl">🎲</span>, color: 'from-pink-400 to-fuchsia-600' },
-];
+import { GameState, Riddle, PlayerStats } from './types';
 
 const INITIAL_STATS: PlayerStats = {
   score: 0,
@@ -26,15 +17,14 @@ const INITIAL_STATS: PlayerStats = {
 
 export default function App() {
   const [gameState, setGameState] = useState<GameState>(GameState.MENU);
-  const [category, setCategory] = useState<Category>('Acak');
   const [stats, setStats] = useState<PlayerStats>(INITIAL_STATS);
   const [currentRiddle, setCurrentRiddle] = useState<Riddle | null>(null);
   const [userAnswer, setUserAnswer] = useState('');
   const [feedback, setFeedback] = useState<string>('');
   const [showHint, setShowHint] = useState(false);
   const [history, setHistory] = useState<string[]>([]);
-  const [isHardMode, setIsHardMode] = useState(false);
   const [enableAnimation, setEnableAnimation] = useState(true);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   // API Key State
   const [apiKey, setApiKey] = useState<string>('');
@@ -62,8 +52,8 @@ export default function App() {
 
     // Load API Key
     const savedKey = localStorage.getItem('tebak_ai_apikey');
-    // Priority: LocalStorage -> Env Variable
-    const keyToUse = savedKey || process.env.API_KEY || '';
+    const keyToUse = savedKey || '';
+    
     setApiKey(keyToUse);
     setInputApiKey(keyToUse);
   }, []);
@@ -83,10 +73,10 @@ export default function App() {
     if (inputApiKey.trim()) {
       localStorage.setItem('tebak_ai_apikey', inputApiKey.trim());
       setApiKey(inputApiKey.trim());
+      setErrorMsg(null); // Clear error on new key
       setGameState(GameState.MENU);
       alert("API Key berhasil disimpan!");
     } else {
-      // Allow clearing the key
       localStorage.removeItem('tebak_ai_apikey');
       setApiKey('');
       alert("API Key dihapus.");
@@ -94,41 +84,51 @@ export default function App() {
   };
 
   // Function to start pre-loading the next riddle in the background
-  const preloadNextRiddle = (cat: Category, currentHistory: string[], key: string) => {
+  const preloadNextRiddle = (currentHistory: string[], key: string) => {
     if (!key) return;
-    nextRiddlePromise.current = generateRiddle(key, cat, currentHistory, isHardMode);
-    console.log("Preloading next riddle...");
+    // We catch pre-fetch errors silently, if it fails, the next main load will catch it
+    nextRiddlePromise.current = generateRiddle(key, currentHistory).catch(e => {
+        console.warn("Prefetch failed:", e);
+        throw e;
+    });
   };
 
-  const startGame = async (selectedCategory: Category) => {
+  const startGame = async () => {
     if (!apiKey) {
         setGameState(GameState.SETTINGS);
         return;
     }
 
-    setCategory(selectedCategory);
     setStats({ ...INITIAL_STATS, highScore: stats.highScore });
+    setErrorMsg(null);
     
     nextRiddlePromise.current = null;
     
     setGameState(GameState.LOADING);
-    await loadNewRiddle(selectedCategory);
+    await loadNewRiddle();
   };
 
-  const loadNewRiddle = async (cat: Category) => {
+  const loadNewRiddle = async () => {
     try {
       setGameState(GameState.LOADING);
       setShowHint(false);
       setUserAnswer('');
       setFeedback('');
+      setErrorMsg(null);
       
       let riddle: Riddle;
 
       if (nextRiddlePromise.current) {
-        riddle = await nextRiddlePromise.current;
+        // Handle promise logic carefully
+        try {
+            riddle = await nextRiddlePromise.current;
+        } catch (e) {
+            // If prefetch failed, try again normally
+            riddle = await generateRiddle(apiKey, history);
+        }
         nextRiddlePromise.current = null;
       } else {
-        riddle = await generateRiddle(apiKey, cat, history, isHardMode);
+        riddle = await generateRiddle(apiKey, history);
       }
       
       setCurrentRiddle(riddle);
@@ -138,12 +138,12 @@ export default function App() {
       if (newHistory.length > 50) newHistory.shift(); 
       setHistory(newHistory);
 
-      preloadNextRiddle(cat, newHistory, apiKey);
+      preloadNextRiddle(newHistory, apiKey);
 
       setGameState(GameState.PLAYING);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setFeedback("Gagal memuat pertanyaan. Cek koneksi atau API Key.");
+      setErrorMsg(e.message || "Gagal memuat pertanyaan.");
       setGameState(GameState.MENU);
     }
   };
@@ -153,14 +153,20 @@ export default function App() {
     if (!userAnswer.trim() || !currentRiddle) return;
 
     setGameState(GameState.CHECKING);
-    const result = await checkAnswer(apiKey, currentRiddle, userAnswer);
+    try {
+        const result = await checkAnswer(apiKey, currentRiddle, userAnswer);
+        setFeedback(result.feedback);
 
-    setFeedback(result.feedback);
-
-    if (result.isCorrect) {
-      handleSuccess();
-    } else {
-      handleFailure();
+        if (result.isCorrect) {
+          handleSuccess();
+        } else {
+          handleFailure();
+        }
+    } catch (e: any) {
+        console.error("Error checking answer:", e);
+        // Don't leave game, just alert the user to try again
+        alert(`Gagal menilai jawaban: ${e.message}\nSilakan coba tekan Jawab lagi.`);
+        setGameState(GameState.PLAYING);
     }
   };
 
@@ -172,8 +178,8 @@ export default function App() {
       colors: ['#8b5cf6', '#ec4899', '#3b82f6']
     });
     
-    const basePoints = isHardMode ? 20 : 10;
-    const streakBonus = stats.streak * (isHardMode ? 3 : 2);
+    const basePoints = 10;
+    const streakBonus = stats.streak * 2;
 
     setStats(prev => ({
       ...prev,
@@ -193,7 +199,7 @@ export default function App() {
   };
 
   const handleNext = () => {
-    loadNewRiddle(category);
+    loadNewRiddle();
   };
 
   const handleExit = () => {
@@ -227,7 +233,7 @@ export default function App() {
                     <Key size={24} className="shrink-0 text-blue-400" />
                     <p>
                         Aplikasi ini membutuhkan <strong>Gemini API Key</strong> agar bisa berjalan. 
-                        Key Anda disimpan aman di browser (Local Storage) dan tidak dikirim ke server kami.
+                        Key Anda disimpan aman di browser (Local Storage).
                     </p>
                 </div>
 
@@ -293,36 +299,33 @@ export default function App() {
           Tebak AI
         </h1>
         <p className="text-lg text-slate-300 max-w-md mx-auto">
-          Mode Tanpa Batas! Pilih kategori dan main sepuasnya.
+          Tantangan Tebak-tebakan Seru Tanpa Batas!
         </p>
 
+        {/* Error Display */}
+        {errorMsg && (
+            <div className="w-full max-w-lg bg-rose-500/10 border border-rose-500/40 text-rose-200 px-4 py-3 rounded-xl flex items-start gap-3 animate-fade-in">
+                <AlertTriangle className="shrink-0 mt-1" size={20} />
+                <div className="flex-1">
+                    <p className="font-bold text-sm">Terjadi Kesalahan</p>
+                    <p className="text-sm opacity-90">{errorMsg}</p>
+                </div>
+                <button onClick={() => setErrorMsg(null)} className="text-rose-300 hover:text-white">
+                    <XCircle size={18} />
+                </button>
+            </div>
+        )}
+
         {/* Setup Warning */}
-        {!apiKey && (
+        {!apiKey && !errorMsg && (
             <div className="bg-red-500/10 border border-red-500/30 text-red-200 px-6 py-3 rounded-2xl flex items-center gap-3 max-w-md animate-bounce cursor-pointer hover:bg-red-500/20 transition-colors" onClick={() => setGameState(GameState.SETTINGS)}>
                 <Key size={20} />
                 <span className="font-bold">Setup API Key dulu yuk!</span>
             </div>
         )}
 
-        {/* Toggles Container */}
+        {/* Animation Toggle Only */}
         <div className="flex flex-wrap justify-center gap-3">
-            {/* Hard Mode Toggle */}
-            <button 
-              onClick={() => setIsHardMode(!isHardMode)}
-              className={`
-                flex items-center gap-2 px-4 py-2 rounded-full border transition-all duration-300
-                ${isHardMode 
-                  ? 'bg-red-500/20 border-red-500 text-red-200 hover:bg-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.3)]' 
-                  : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:bg-slate-800'}
-              `}
-            >
-              {isHardMode ? <Skull size={18} /> : <Zap size={18} />}
-              <span className="font-bold text-sm uppercase tracking-wider">
-                Mode Sulit: {isHardMode ? 'ON' : 'OFF'}
-              </span>
-            </button>
-
-            {/* Animation Toggle */}
             <button 
               onClick={() => setEnableAnimation(!enableAnimation)}
               className={`
@@ -334,38 +337,32 @@ export default function App() {
             >
               {enableAnimation ? <Sparkles size={18} /> : <EyeOff size={18} />}
               <span className="font-bold text-sm uppercase tracking-wider">
-                Bg: {enableAnimation ? 'ON' : 'OFF'}
+                Efek Background: {enableAnimation ? 'ON' : 'OFF'}
               </span>
             </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 w-full">
-        {CATEGORIES.map((cat) => (
+      {/* Main Play Button */}
+      <div className="w-full flex justify-center mt-8">
           <button
-            key={cat.id}
-            onClick={() => startGame(cat.id)}
+            onClick={startGame}
+            disabled={!apiKey}
             className={`
-              relative group overflow-hidden rounded-2xl p-6 transition-all duration-300 hover:scale-105 active:scale-95
-              bg-slate-800/50 hover:bg-slate-800 border border-slate-700/50 hover:border-slate-600
-              flex flex-col items-center justify-center gap-3 shadow-xl
+              relative group overflow-hidden rounded-full p-8 md:p-10 transition-all duration-300
+              ${!apiKey ? 'opacity-50 cursor-not-allowed grayscale' : 'hover:scale-105 hover:shadow-[0_0_40px_rgba(139,92,246,0.5)]'}
+              bg-gradient-to-r from-violet-600 to-fuchsia-600 shadow-xl
+              flex flex-col items-center justify-center gap-2 w-64 h-64 border-4 border-white/20
             `}
           >
-            <div className={`
-              absolute inset-0 opacity-0 group-hover:opacity-10 transition-opacity duration-300
-              bg-gradient-to-br ${cat.color}
-            `} />
-            <div className="transform transition-transform group-hover:-translate-y-1 duration-300">
-              {cat.icon}
-            </div>
-            <span className="font-bold text-slate-200 group-hover:text-white transition-colors">
-              {cat.id}
-            </span>
+            <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500 animate-pulse"></div>
+            <Play size={64} fill="currentColor" className="text-white drop-shadow-md ml-2" />
+            <span className="font-black text-2xl text-white tracking-wider mt-2">MULAI MAIN</span>
+            <span className="text-white/80 text-sm font-medium">Mode Acak</span>
           </button>
-        ))}
       </div>
 
-      <div className="flex gap-4 w-full justify-center flex-wrap">
+      <div className="flex gap-4 w-full justify-center flex-wrap max-w-md mt-4">
         {stats.score > 0 && (
            <div className="bg-slate-800/40 rounded-xl p-4 flex items-center justify-center gap-2 text-violet-400 border border-violet-500/20 flex-1 min-w-[140px]">
              <Star size={20} />
@@ -396,14 +393,6 @@ export default function App() {
           </div>
         </div>
         <div className="flex items-center gap-3">
-          {isHardMode && (
-             <div className="text-red-400 text-xs font-black uppercase tracking-widest border border-red-500/30 px-2 py-1 rounded bg-red-900/20 animate-pulse">
-               Hard Mode
-             </div>
-          )}
-          <div className="text-slate-400 text-sm font-semibold tracking-wider uppercase hidden md:block">
-            {category}
-          </div>
           <button 
             onClick={handleExit}
             className="p-2 rounded-full bg-slate-700/50 hover:bg-slate-700 text-slate-300 hover:text-white transition-colors"
@@ -415,19 +404,16 @@ export default function App() {
       </div>
 
       {/* Riddle Card */}
-      <div className={`
-          bg-white/5 border rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden backdrop-blur-md
-          ${isHardMode ? 'border-red-500/20 shadow-red-900/20' : 'border-white/10'}
-        `}>
+      <div className="bg-white/5 border border-white/10 rounded-3xl p-8 md:p-10 shadow-2xl relative overflow-hidden backdrop-blur-md">
          {/* Decorative quotes */}
          <div className="absolute top-4 left-6 text-6xl text-white/5 font-serif select-none">“</div>
          <div className="absolute bottom-4 right-6 text-6xl text-white/5 font-serif select-none transform rotate-180">“</div>
 
         <div className="relative z-10 flex flex-col gap-6 items-center text-center">
           <div className="flex items-center gap-3">
-             {isHardMode ? <Skull size={32} className="text-red-400" /> : <Brain size={32} className="text-violet-400" />}
-             <h3 className={`text-xl font-bold ${isHardMode ? 'text-red-200' : 'text-violet-200'}`}>
-               {isHardMode ? 'Pertanyaan Sulit' : 'Pertanyaan'}
+             <Brain size={32} className="text-violet-400" />
+             <h3 className="text-xl font-bold text-violet-200">
+               Pertanyaan
              </h3>
              <button onClick={() => currentRiddle && speak(currentRiddle.question)} className="p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400">
                 <Volume2 size={20} />
@@ -438,7 +424,7 @@ export default function App() {
             {currentRiddle?.question}
           </p>
 
-          {showHint && !isHardMode && (
+          {showHint && (
             <div className="bg-yellow-500/10 border border-yellow-500/20 text-yellow-200 px-4 py-3 rounded-xl text-sm animate-fade-in flex items-center gap-2">
               <Lightbulb size={16} className="text-yellow-400 shrink-0" />
               {currentRiddle?.hint}
@@ -463,12 +449,12 @@ export default function App() {
             <Button
                 type="button"
                 variant="secondary"
-                className={`col-span-1 ${isHardMode ? 'opacity-50 grayscale' : ''}`}
-                onClick={() => !isHardMode && setShowHint(true)}
-                disabled={showHint || gameState === GameState.CHECKING || isHardMode}
-                title={isHardMode ? "Petunjuk tidak tersedia di Mode Sulit" : "Lihat Petunjuk"}
+                className="col-span-1"
+                onClick={() => setShowHint(true)}
+                disabled={showHint || gameState === GameState.CHECKING}
+                title="Lihat Petunjuk"
             >
-                {isHardMode ? <Skull size={24} /> : <HelpCircle size={24} />}
+                <HelpCircle size={24} />
             </Button>
             <Button 
                 type="submit" 
@@ -535,7 +521,6 @@ export default function App() {
     );
   };
 
-  // Although unreachable in Unlimited mode, kept for compatibility if logic changes
   const renderGameOver = () => (
     <div className="w-full max-w-lg flex flex-col items-center gap-8 animate-scale-in text-center">
       <div className="relative">
